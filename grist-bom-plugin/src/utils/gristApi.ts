@@ -1,5 +1,10 @@
 import type { BOMNode } from './bomParser';
 
+// Helper to check if grist is available
+function hasGrist(): boolean {
+  return typeof grist !== 'undefined' && grist !== null;
+}
+
 export interface GristBOMCADRecord {
   id: number;
   Part_Number: string;
@@ -23,7 +28,6 @@ export let currentProjektId: number | null = null;
 
 export async function initGristApi(onRecordChange: (record: any) => void) {
   await new Promise<void>((resolve) => {
-    // @ts-ignore
     if (typeof grist === 'undefined') {
       console.warn('[GRIST-BOM] Grist API not found. Running in standalone mode.');
       setTimeout(resolve, 1000);
@@ -39,7 +43,6 @@ export async function initGristApi(onRecordChange: (record: any) => void) {
 
     // Case 1: Widget is linked via Select By to a table and receives a full record
     // (e.g. Source Data = Projekty, Selected By = Projekty)
-    // @ts-ignore
     grist.onRecord((record: any) => {
       if (record && record.id) {
         // If the source table has a 'Projekt' reference column, use that
@@ -53,7 +56,6 @@ export async function initGristApi(onRecordChange: (record: any) => void) {
     // Case 2: Widget is a view of BOM_struktura filtered by Projekt
     // When no rows exist for this projekt, onRecord is never called.
     // Grist passes filter state via linked widget options.
-    // @ts-ignore
     grist.on('message', (event: any) => {
       if (event?.type === 'options') {
         const opts = event.options;
@@ -66,9 +68,7 @@ export async function initGristApi(onRecordChange: (record: any) => void) {
     });
 
     // Also try to read from widget options directly (Grist 1.1.x+)
-    // @ts-ignore
     if (typeof grist.widgetApi !== 'undefined') {
-      // @ts-ignore
       grist.widgetApi.getOptions().then((opts: any) => {
         if (opts?.filters?.Projekt && opts.filters.Projekt.length > 0 && !currentProjektId) {
           currentProjektId = opts.filters.Projekt[0];
@@ -84,16 +84,13 @@ export async function initGristApi(onRecordChange: (record: any) => void) {
 }
 
 export async function fetchGristData() {
-  // @ts-ignore
   if (typeof grist === 'undefined' || !grist.docApi) {
     console.warn('[GRIST-BOM] fetchGristData: Grist API not available');
     return { cad: [], struct: [] };
   }
 
   try {
-    // @ts-ignore
     const cadTable = await grist.docApi.fetchTable('BOM_CAD');
-    // @ts-ignore
     const structTable = await grist.docApi.fetchTable('BOM_struktura');
     
     console.warn('[GRIST-BOM] Successfully fetched BOM_CAD and BOM_struktura');
@@ -105,11 +102,9 @@ export async function fetchGristData() {
     console.error('[GRIST-BOM] ERROR: Failed to fetch Grist data:', e);
     // Try to fetch tables individually to identify which one fails
     try {
-      // @ts-ignore
       const cadTable = await grist.docApi.fetchTable('BOM_CAD');
       console.warn('[GRIST-BOM] BOM_CAD fetched successfully');
       try {
-        // @ts-ignore
         const structTable = await grist.docApi.fetchTable('BOM_struktura');
         console.warn('[GRIST-BOM] BOM_struktura fetched successfully');
         return {
@@ -146,13 +141,11 @@ function formatGristTable<T>(gristTableData: any): T[] {
 }
 
 export async function fetchProjects() {
-  // @ts-ignore
-  if (typeof grist === 'undefined') {
+  if (!hasGrist()) {
     console.warn('[GRIST-BOM] grist is undefined - widget not in Grist environment');
     return [];
   }
   
-  // @ts-ignore
   if (!grist.docApi) {
     console.warn('[GRIST-BOM] grist.docApi not available');
     return [];
@@ -165,21 +158,16 @@ export async function fetchProjects() {
     let tableData: any = null;
 
     // Try 1: List all available tables and find the one with tableId = 'Projekty'
-    // @ts-ignore
     if (grist.docApi.tables) {
       console.warn('[GRIST-BOM] grist.docApi.tables is available');
-      console.warn('[GRIST-BOM] grist.docApi.tables is available');
-      // @ts-ignore
       const tableNames = Object.keys(grist.docApi.tables);
       console.warn('[GRIST-BOM] Available table names:', tableNames);
       
-      // @ts-ignore
       for (const [tableName, tableObj] of Object.entries(grist.docApi.tables)) {
+        const tableObjTyped = tableObj as { tableId: string };
         // Check if this table has tableId = 'Projekty'
-        // @ts-ignore
-        if (tableObj.tableId === 'Projekty' || tableName === 'Projekty') {
-          console.warn(`[GRIST-BOM] Found Projekty table with name: ${tableName}, tableId: ${tableObj.tableId}`);
-          // @ts-ignore
+        if (tableObjTyped.tableId === 'Projekty' || tableName === 'Projekty') {
+          console.warn(`[GRIST-BOM] Found Projekty table with name: ${tableName}, tableId: ${tableObjTyped.tableId}`);
           tableData = await grist.docApi.fetchTable(tableName);
           if (tableData && tableData.id && tableData.id.length > 0) {
             console.warn('[GRIST-BOM] Successfully fetched Projekty table');
@@ -194,7 +182,6 @@ export async function fetchProjects() {
     // Try 2: First test if fetchTable works at all with a known table
     console.warn('[GRIST-BOM] Testing fetchTable with BOM_CAD (known to work)...');
     try {
-      // @ts-ignore
       const testPromise = grist.docApi.fetchTable('BOM_CAD');
       const testTimeout = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('BOM_CAD fetch timeout')), 3000)
@@ -210,7 +197,6 @@ export async function fetchProjects() {
     console.warn('[GRIST-BOM] Trying fetchTable("Projekty")...');
     console.warn('[GRIST-BOM] fetchTable type:', typeof grist.docApi.fetchTable);
     try {
-      // @ts-ignore
       const fetchPromise = grist.docApi.fetchTable('Projekty');
       console.warn('[GRIST-BOM] fetchTable("Projekty") called, waiting for result...');
       // Add timeout to prevent hanging
@@ -229,7 +215,7 @@ export async function fetchProjects() {
 
     // Try 3: Numeric table ID (24 from database)
     try {
-      // @ts-ignore
+      
       tableData = await grist.docApi.fetchTable('24');
       if (tableData && tableData.id && tableData.id.length > 0) {
         console.warn('[GRIST-BOM] Found Projekty table with numeric ID 24 (as string)');
@@ -241,7 +227,7 @@ export async function fetchProjects() {
 
     // Try 4: Table24 (Grist internal naming)
     try {
-      // @ts-ignore
+      
       tableData = await grist.docApi.fetchTable('Table24');
       if (tableData && tableData.id && tableData.id.length > 0) {
         console.warn('[GRIST-BOM] Found Projekty table as Table24');
@@ -253,7 +239,7 @@ export async function fetchProjects() {
 
     // Try 5: Use selected table if widget is linked to Projekty
     try {
-      // @ts-ignore
+      
       tableData = await grist.docApi.fetchSelectedTable();
       if (tableData && tableData.id && tableData.id.length > 0) {
         console.warn('[GRIST-BOM] Using fetchSelectedTable()');
@@ -265,12 +251,12 @@ export async function fetchProjects() {
 
     // Try 6: Iterate through all tables and check for 'Projekt' column
     console.warn('[GRIST-BOM] Trying to find table with Projekt column...');
-    // @ts-ignore
+    
     if (grist.docApi.tables) {
-      // @ts-ignore
+      
       for (const [tableName] of Object.entries(grist.docApi.tables)) {
         try {
-          // @ts-ignore
+          
           tableData = await grist.docApi.fetchTable(tableName);
           // Check if this table has a 'Projekt' or 'Projekty' column
           if (tableData && tableData.Projekt && Array.isArray(tableData.Projekt) && tableData.Projekt.length > 0) {
@@ -299,7 +285,7 @@ export async function syncToGrist(
   nodes: BOMNode[],
   projektId: number | null
 ) {
-  // @ts-ignore
+  
   if (typeof grist === 'undefined' || !grist.docApi) {
     alert("Not connected to Grist!");
     return;
@@ -342,7 +328,15 @@ export async function syncToGrist(
   
   // 1. Create new BOM_CAD records WITHOUT Projekt field (to avoid Link column issues)
   if (newCadParts.size > 0) {
-    const cadInserts = Array.from(newCadParts).map(partNumber => {
+    interface CadInsert {
+      Part_Number: string;
+      Description: string;
+      Material: string;
+      REV: string;
+      Producent: string;
+    }
+    
+    const cadInserts: CadInsert[] = Array.from(newCadParts).map(partNumber => {
       const node = flatNodes.find(n => n.partNumber === partNumber && n.status !== 'Usunięty');
       return node ? {
         Part_Number: partNumber,
@@ -351,17 +345,18 @@ export async function syncToGrist(
         REV: node.rawData['REV'] || node.rawData['Revision'] || '',
         Producent: node.rawData['Producent'] || node.rawData['Manufacturer'] || '',
       } : null;
-    }).filter(Boolean);
+    }).filter((x): x is CadInsert => x !== null);
     
     if (cadInserts.length > 0) {
-      const cols = Object.keys(cadInserts[0]);
-      const payload: any = {};
+      const firstInsert = cadInserts[0]!;
+      const cols = Object.keys(firstInsert) as (keyof CadInsert)[];
+      const payload: Record<string, any[]> = {};
       for (const col of cols) {
         payload[col] = cadInserts.map(r => r[col]);
       }
       const ids = new Array(cadInserts.length).fill(null);
       console.warn('[GRIST-BOM] BulkAddRecord BOM_CAD payload:', JSON.stringify(payload, null, 2));
-      // @ts-ignore
+      
       await grist.docApi.applyUserActions([
         ['BulkAddRecord', 'BOM_CAD', ids, payload]
       ]);
@@ -396,7 +391,7 @@ export async function syncToGrist(
       console.warn('[GRIST-BOM] Updating', allCadIdsToUpdate.length, 'BOM_CAD records with Projekt:', projektId);
       console.warn('[GRIST-BOM] BulkUpdateRecord BOM_CAD payload:', JSON.stringify({ Projekt: allCadIdsToUpdate.map(() => projektId) }, null, 2));
       // For Link columns in BulkUpdateRecord, Grist expects an array of values
-      // @ts-ignore
+      
       await grist.docApi.applyUserActions([
         ['BulkUpdateRecord', 'BOM_CAD', allCadIdsToUpdate, { 
           Projekt: allCadIdsToUpdate.map(() => projektId) 
@@ -479,7 +474,7 @@ export async function syncToGrist(
   }
   
   if (actions.length > 0) {
-    // @ts-ignore
+    
     await grist.docApi.applyUserActions(actions);
   }
 }

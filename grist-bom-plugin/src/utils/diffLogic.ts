@@ -8,33 +8,55 @@ export function calculateDiff(
   projektId: number | null
 ): BOMNode[] {
   
+  // Filter CAD records by project if projektId is provided
+  const filteredCadRecords = projektId !== null 
+    ? cadRecords.filter(cad => cad.Projekt === projektId || cad.Projekt === Number(projektId))
+    : cadRecords;
+  
+  // Filter struct records: only those where the Part_Number (CAD ID) belongs to a CAD record in the filtered set
+  // Also filter by project if the struct record has a Projekt field
+  const filteredStructRecords = projektId !== null
+    ? structRecords.filter(s => {
+        // Check if the CAD record for this struct item belongs to the current project
+        const cadRecord = cadRecords.find(c => c.id === s.Part_Number);
+        if (cadRecord) {
+          return cadRecord.Projekt === projektId || cadRecord.Projekt === Number(projektId);
+        }
+        // Also check if struct itself has Projekt field
+        return (s as any).Projekt === projektId || (s as any).Projekt === Number(projektId);
+      })
+    : structRecords;
+
+  console.warn('[GRIST-BOM] calculateDiff: Filtered CAD records:', filteredCadRecords.length, 'of', cadRecords.length);
+  console.warn('[GRIST-BOM] calculateDiff: Filtered struct records:', filteredStructRecords.length, 'of', structRecords.length);
+  console.warn('[GRIST-BOM] calculateDiff: projektId:', projektId, 'type:', typeof projektId);
+
   // Create a map of CAD records for quick lookup
-  // Include ALL records regardless of Projekt, so we can detect parts that exist
-  // but belong to a different project
   const cadMap = new Map<string, GristBOMCADRecord>();
-  for (const cad of cadRecords) {
+  for (const cad of filteredCadRecords) {
     if (cad.Part_Number) {
       cadMap.set(cad.Part_Number.toString(), cad);
     }
   }
 
   // To check structure, we need to map structural records to Part_Number 
-  // Wait, structRecords store Part_Number as ID. We need a reverse map id -> Part_Number string
+  // structRecords store Part_Number as ID (reference to BOM_CAD.id)
   const cadIdToPartNumber = new Map<number, string>();
-  for (const cad of cadRecords) {
+  for (const cad of filteredCadRecords) {
     cadIdToPartNumber.set(cad.id, cad.Part_Number);
+  }
+  // Also include all CAD records for parent lookup (parents might be in different project)
+  for (const cad of cadRecords) {
+    if (!cadIdToPartNumber.has(cad.id)) {
+      cadIdToPartNumber.set(cad.id, cad.Part_Number);
+    }
   }
 
   // Create a struct map: ParentPartNumber -> Map<ChildPartNumber, Record>
-  // In BOM_struktura, Parent is cad ID. Part_Number is cad ID.
-  // Also create a flat map of all Part_Numbers in BOM_struktura for quick lookup
   const structMap = new Map<string, Map<string, GristBOMStrukturaRecord>>();
-  const allPartsInStruktura = new Set<string>(); // All Part_Numbers that exist in BOM_struktura
+  const allPartsInStruktura = new Set<string>(); // All Part_Numbers that exist in BOM_struktura for THIS project
   
-  for (const s of structRecords) {
-    // If we only want active records for diffing
-    // if (s.Status_czesci === 'Usunięty') continue;
-    
+  for (const s of filteredStructRecords) {
     const parentId = s.Parent;
     const childId = s.Part_Number;
     
@@ -46,7 +68,7 @@ export function calculateDiff(
         structMap.set(parentPartNumber, new Map());
       }
       structMap.get(parentPartNumber)!.set(childPartNumber, s);
-      allPartsInStruktura.add(childPartNumber); // Track all parts in struktura
+      allPartsInStruktura.add(childPartNumber);
     }
   }
 
@@ -58,53 +80,47 @@ export function calculateDiff(
     nodePartNumbers.add(node.partNumber);
     const cadRecord = cadMap.get(node.partNumber);
     if (!cadRecord) {
+      // Part doesn't exist in BOM_CAD for this project
       node.action = 'create';
       node.status = 'Aktywny';
+      console.warn('[GRIST-BOM] Node NOT in CAD:', node.partNumber, 'action: create');
     } else {
       node.gristId = cadRecord.id;
-      // Check if part belongs to current project
-      const partBelongsToCurrentProject = cadRecord.Projekt === projektId;
+      // Part exists in BOM_CAD for this project
+      // Check if it exists in BOM_struktura (anywhere, regardless of parent)
+      const partExistsInStruktura = allPartsInStruktura.has(node.partNumber);
       
-      if (!partBelongsToCurrentProject) {
-        // Part exists in BOM_CAD but with different project
-        // Treat as create for current project
+      if (!partExistsInStruktura) {
         node.action = 'create';
         node.status = 'Aktywny';
+        console.warn('[GRIST-BOM] Node in CAD but NOT in struktura:', node.partNumber, 'action: create');
       } else {
-        // Part exists in BOM_CAD with current project
-        // Check if it exists in BOM_struktura (anywhere, regardless of parent)
-        const partExistsInStruktura = allPartsInStruktura.has(node.partNumber);
+        // Part exists in both BOM_CAD and BOM_struktura for this project
+        // Try to find the struct record for this parent
+        const parentNode = node.parentItem ? flatNodes.find(n => n.item === node.parentItem) : null;
+        const parentPartNumber = parentNode ? parentNode.partNumber : 'root';
         
-        if (!partExistsInStruktura) {
-          node.action = 'create';
-          node.status = 'Aktywny';
-        } else {
-          // Part exists in both BOM_CAD and BOM_struktura with current project
-          // For now, assume it exists - user wants "none" if part exists in struktura
-          // We can check structure details later if needed
-          // Try to find the struct record for this parent
-          const parentNode = node.parentItem ? flatNodes.find(n => n.item === node.parentItem) : null;
-          const parentPartNumber = parentNode ? parentNode.partNumber : 'root';
-          
-          const childrenMap = structMap.get(parentPartNumber);
-          const structRecord = childrenMap?.get(node.partNumber);
-          
-          if (structRecord) {
-            node.gristStructureId = structRecord.id;
-            // Check if QTY or Status changed
-            if (structRecord.QTY != node.qty || structRecord.Status_czesci === 'Usunięty') {
-              node.action = 'update';
-              node.status = 'Aktywny';
-            } else {
-              node.action = 'none';
-              node.status = 'Aktywny';
-            }
+        const childrenMap = structMap.get(parentPartNumber);
+        const structRecord = childrenMap?.get(node.partNumber);
+        
+        if (structRecord) {
+          node.gristStructureId = structRecord.id;
+          // Check if QTY or Status changed
+          if (structRecord.QTY != node.qty || structRecord.Status_czesci === 'Usunięty') {
+            node.action = 'update';
+            node.status = 'Aktywny';
+            console.warn('[GRIST-BOM] Node needs update:', node.partNumber, 'QTY:', structRecord.QTY, 'vs', node.qty);
           } else {
-            // Part exists in struktura but under different parent or parent mapping issue
-            // For now, treat as 'none' since the part itself exists in struktura
             node.action = 'none';
             node.status = 'Aktywny';
+            console.warn('[GRIST-BOM] Node exists with no changes:', node.partNumber, 'action: none');
           }
+        } else {
+          // Part exists in struktura but under different parent or parent mapping issue
+          // This means the part exists in BOM_struktura but not under the expected parent
+          node.action = 'create';
+          node.status = 'Aktywny';
+          console.warn('[GRIST-BOM] Node in struktura but under different parent:', node.partNumber, 'expected parent:', parentPartNumber, 'action: create');
         }
       }
     }

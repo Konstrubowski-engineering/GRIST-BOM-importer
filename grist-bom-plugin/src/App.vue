@@ -32,7 +32,7 @@
       <div v-else class="tree-container">
         <div class="toolbar">
           <button @click="reset" class="btn btn-secondary">Anuluj</button>
-          <button @click="refreshActions" class="btn btn-secondary" :disabled="!fileData.value?.length">
+          <button @click="refreshActions" class="btn btn-secondary" :disabled="!fileData.length">
             Odśwież akcje
           </button>
           <button @click="performSync" class="btn btn-primary" :disabled="isSyncing">
@@ -73,17 +73,12 @@ const isSyncing = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 const fileData = ref<BOMNode[]>([]); // Store parsed file data for refresh
 
-let cadData: any[] = [];
-let structData: any[] = [];
-
 onMounted(async () => {
   console.warn('[GRIST-BOM] App mounted - widget loaded');
   
   // MUST call grist.ready() FIRST before any docApi calls
-  // @ts-ignore
   if (typeof grist !== 'undefined') {
     console.warn('[GRIST-BOM] Calling grist.ready()...');
-    // @ts-ignore
     grist.ready(); // No parameters - just signal that widget is ready
     console.warn('[GRIST-BOM] grist.ready() called');
   }
@@ -128,10 +123,7 @@ const processFile = async (file: File) => {
     const parsedNodes = await parseBOMFile(file);
     fileData.value = parsedNodes; // Store for refresh
     
-    // 2. Fetch Grist Data
-    const gristData = await fetchGristData();
-    cadData = gristData.cad;
-    structData = gristData.struct;
+    // 2. Fetch Grist Data (we don't need to store it, refreshActions will fetch fresh data)
     
     // 3. Diff and create tree
     await refreshActions();
