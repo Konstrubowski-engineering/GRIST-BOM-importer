@@ -1,0 +1,496 @@
+import type { BOMNode } from './bomParser';
+
+export interface GristBOMCADRecord {
+  id: number;
+  Part_Number: string;
+  Description: string;
+  Projekt: number;
+  [key: string]: any;
+}
+
+export interface GristBOMStrukturaRecord {
+  id: number;
+  Part_Number: number; // reference to BOM_CAD id
+  Parent: number | null; // reference to BOM_CAD id
+  Item: string;
+  QTY: number | string;
+  Status_czesci: string;
+  [key: string]: any;
+}
+
+// Current Projekt ID from the active record
+export let currentProjektId: number | null = null;
+
+export async function initGristApi(onRecordChange: (record: any) => void) {
+  await new Promise<void>((resolve) => {
+    // @ts-ignore
+    if (typeof grist === 'undefined') {
+      console.warn('[GRIST-BOM] Grist API not found. Running in standalone mode.');
+      setTimeout(resolve, 1000);
+      return;
+    }
+
+    console.warn('[GRIST-BOM] Initializing Grist API... (grist.ready already called in App.vue)');
+    // grist.ready() is already called in App.vue before fetchProjects()
+    // No need to call it again here
+
+    let resolved = false;
+    const done = () => { if (!resolved) { resolved = true; resolve(); } };
+
+    // Case 1: Widget is linked via Select By to a table and receives a full record
+    // (e.g. Source Data = Projekty, Selected By = Projekty)
+    // @ts-ignore
+    grist.onRecord((record: any) => {
+      if (record && record.id) {
+        // If the source table has a 'Projekt' reference column, use that
+        // Otherwise treat the record itself as the project record
+        currentProjektId = record.Projekt ?? record.id;
+      }
+      onRecordChange(record);
+      done();
+    });
+
+    // Case 2: Widget is a view of BOM_struktura filtered by Projekt
+    // When no rows exist for this projekt, onRecord is never called.
+    // Grist passes filter state via linked widget options.
+    // @ts-ignore
+    grist.on('message', (event: any) => {
+      if (event?.type === 'options') {
+        const opts = event.options;
+        if (opts?.filters?.Projekt && opts.filters.Projekt.length > 0) {
+          currentProjektId = opts.filters.Projekt[0];
+          onRecordChange(null);
+          done();
+        }
+      }
+    });
+
+    // Also try to read from widget options directly (Grist 1.1.x+)
+    // @ts-ignore
+    if (typeof grist.widgetApi !== 'undefined') {
+      // @ts-ignore
+      grist.widgetApi.getOptions().then((opts: any) => {
+        if (opts?.filters?.Projekt && opts.filters.Projekt.length > 0 && !currentProjektId) {
+          currentProjektId = opts.filters.Projekt[0];
+          onRecordChange(null);
+          done();
+        }
+      }).catch(() => {});
+    }
+
+    // Fallback: if we still get no record after 3s, just resolve (user picks from dropdown)
+    setTimeout(done, 3000);
+  });
+}
+
+export async function fetchGristData() {
+  // @ts-ignore
+  if (typeof grist === 'undefined' || !grist.docApi) {
+    console.warn('[GRIST-BOM] fetchGristData: Grist API not available');
+    return { cad: [], struct: [] };
+  }
+
+  try {
+    // @ts-ignore
+    const cadTable = await grist.docApi.fetchTable('BOM_CAD');
+    // @ts-ignore
+    const structTable = await grist.docApi.fetchTable('BOM_struktura');
+    
+    console.warn('[GRIST-BOM] Successfully fetched BOM_CAD and BOM_struktura');
+    return {
+      cad: formatGristTable<GristBOMCADRecord>(cadTable),
+      struct: formatGristTable<GristBOMStrukturaRecord>(structTable)
+    };
+  } catch (e) {
+    console.error('[GRIST-BOM] ERROR: Failed to fetch Grist data:', e);
+    // Try to fetch tables individually to identify which one fails
+    try {
+      // @ts-ignore
+      const cadTable = await grist.docApi.fetchTable('BOM_CAD');
+      console.warn('[GRIST-BOM] BOM_CAD fetched successfully');
+      try {
+        // @ts-ignore
+        const structTable = await grist.docApi.fetchTable('BOM_struktura');
+        console.warn('[GRIST-BOM] BOM_struktura fetched successfully');
+        return {
+          cad: formatGristTable<GristBOMCADRecord>(cadTable),
+          struct: formatGristTable<GristBOMStrukturaRecord>(structTable)
+        };
+      } catch (structErr) {
+        console.error('[GRIST-BOM] ERROR: Failed to fetch BOM_struktura:', structErr);
+        return {
+          cad: formatGristTable<GristBOMCADRecord>(cadTable),
+          struct: []
+        };
+      }
+    } catch (cadErr) {
+      console.error('[GRIST-BOM] ERROR: Failed to fetch BOM_CAD:', cadErr);
+      return { cad: [], struct: [] };
+    }
+  }
+}
+
+function formatGristTable<T>(gristTableData: any): T[] {
+  const records: any[] = [];
+  const ids = gristTableData.id || [];
+  for (let i = 0; i < ids.length; i++) {
+    const record: any = { id: ids[i] };
+    for (const key of Object.keys(gristTableData)) {
+      if (key !== 'id') {
+        record[key] = gristTableData[key][i];
+      }
+    }
+    records.push(record);
+  }
+  return records;
+}
+
+export async function fetchProjects() {
+  // @ts-ignore
+  if (typeof grist === 'undefined') {
+    console.warn('[GRIST-BOM] grist is undefined - widget not in Grist environment');
+    return [];
+  }
+  
+  // @ts-ignore
+  if (!grist.docApi) {
+    console.warn('[GRIST-BOM] grist.docApi not available');
+    return [];
+  }
+  
+  console.warn('[GRIST-BOM] grist.docApi is available');
+  console.warn('[GRIST-BOM] grist.docApi.tables:', typeof grist.docApi.tables);
+  
+  try {
+    let tableData: any = null;
+
+    // Try 1: List all available tables and find the one with tableId = 'Projekty'
+    // @ts-ignore
+    if (grist.docApi.tables) {
+      console.warn('[GRIST-BOM] grist.docApi.tables is available');
+      console.warn('[GRIST-BOM] grist.docApi.tables is available');
+      // @ts-ignore
+      const tableNames = Object.keys(grist.docApi.tables);
+      console.warn('[GRIST-BOM] Available table names:', tableNames);
+      
+      // @ts-ignore
+      for (const [tableName, tableObj] of Object.entries(grist.docApi.tables)) {
+        // Check if this table has tableId = 'Projekty'
+        // @ts-ignore
+        if (tableObj.tableId === 'Projekty' || tableName === 'Projekty') {
+          console.warn(`[GRIST-BOM] Found Projekty table with name: ${tableName}, tableId: ${tableObj.tableId}`);
+          // @ts-ignore
+          tableData = await grist.docApi.fetchTable(tableName);
+          if (tableData && tableData.id && tableData.id.length > 0) {
+            console.warn('[GRIST-BOM] Successfully fetched Projekty table');
+            return formatGristTable<any>(tableData);
+          }
+        }
+      }
+    }
+    
+    console.warn('[GRIST-BOM] Try 1 completed, moving to Try 2');
+
+    // Try 2: First test if fetchTable works at all with a known table
+    console.warn('[GRIST-BOM] Testing fetchTable with BOM_CAD (known to work)...');
+    try {
+      // @ts-ignore
+      const testPromise = grist.docApi.fetchTable('BOM_CAD');
+      const testTimeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('BOM_CAD fetch timeout')), 3000)
+      );
+      const testData = await Promise.race([testPromise, testTimeout]);
+      console.warn('[GRIST-BOM] BOM_CAD fetch OK, data length:', testData?.id?.length || 0);
+    } catch (e) {
+      console.warn('[GRIST-BOM] BOM_CAD fetch failed:', e);
+      console.warn('[GRIST-BOM] fetchTable is not working at all - permissions issue?');
+    }
+    
+    // Try 2: Standard table name
+    console.warn('[GRIST-BOM] Trying fetchTable("Projekty")...');
+    console.warn('[GRIST-BOM] fetchTable type:', typeof grist.docApi.fetchTable);
+    try {
+      // @ts-ignore
+      const fetchPromise = grist.docApi.fetchTable('Projekty');
+      console.warn('[GRIST-BOM] fetchTable("Projekty") called, waiting for result...');
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('fetchTable timeout after 5s')), 5000)
+      );
+      tableData = await Promise.race([fetchPromise, timeoutPromise]);
+      console.warn('[GRIST-BOM] fetchTable("Projekty") returned:', tableData ? 'data' : 'empty');
+      if (tableData && tableData.id && tableData.id.length > 0) {
+        console.warn('[GRIST-BOM] Found Projekty table with standard name');
+        return formatGristTable<any>(tableData);
+      }
+    } catch (e) {
+      console.warn('[GRIST-BOM] fetchTable("Projekty") failed:', e);
+    }
+
+    // Try 3: Numeric table ID (24 from database)
+    try {
+      // @ts-ignore
+      tableData = await grist.docApi.fetchTable('24');
+      if (tableData && tableData.id && tableData.id.length > 0) {
+        console.warn('[GRIST-BOM] Found Projekty table with numeric ID 24 (as string)');
+        return formatGristTable<any>(tableData);
+      }
+    } catch (e) {
+      console.warn('[GRIST-BOM] fetchTable("24") failed:', e);
+    }
+
+    // Try 4: Table24 (Grist internal naming)
+    try {
+      // @ts-ignore
+      tableData = await grist.docApi.fetchTable('Table24');
+      if (tableData && tableData.id && tableData.id.length > 0) {
+        console.warn('[GRIST-BOM] Found Projekty table as Table24');
+        return formatGristTable<any>(tableData);
+      }
+    } catch (e) {
+      console.warn('[GRIST-BOM] fetchTable("Table24") failed:', e);
+    }
+
+    // Try 5: Use selected table if widget is linked to Projekty
+    try {
+      // @ts-ignore
+      tableData = await grist.docApi.fetchSelectedTable();
+      if (tableData && tableData.id && tableData.id.length > 0) {
+        console.warn('[GRIST-BOM] Using fetchSelectedTable()');
+        return formatGristTable<any>(tableData);
+      }
+    } catch (e) {
+      console.warn('[GRIST-BOM] fetchSelectedTable() failed:', e);
+    }
+
+    // Try 6: Iterate through all tables and check for 'Projekt' column
+    console.warn('[GRIST-BOM] Trying to find table with Projekt column...');
+    // @ts-ignore
+    if (grist.docApi.tables) {
+      // @ts-ignore
+      for (const [tableName] of Object.entries(grist.docApi.tables)) {
+        try {
+          // @ts-ignore
+          tableData = await grist.docApi.fetchTable(tableName);
+          // Check if this table has a 'Projekt' or 'Projekty' column
+          if (tableData && tableData.Projekt && Array.isArray(tableData.Projekt) && tableData.Projekt.length > 0) {
+            console.warn(`[GRIST-BOM] Found table with Projekt column: ${tableName}`);
+            return formatGristTable<any>(tableData);
+          }
+          if (tableData && tableData.Projekty && Array.isArray(tableData.Projekty) && tableData.Projekty.length > 0) {
+            console.warn(`[GRIST-BOM] Found table with Projekty column: ${tableName}`);
+            return formatGristTable<any>(tableData);
+          }
+        } catch (e) {
+          // Skip errors for individual tables
+        }
+      }
+    }
+
+    console.warn('[GRIST-BOM] All attempts failed - Projekty table not found');
+    return [];
+  } catch (e) {
+    console.error('[GRIST-BOM] ERROR: Nie udało się pobrać tabeli Projekty', e);
+    return [];
+  }
+}
+
+export async function syncToGrist(
+  nodes: BOMNode[],
+  projektId: number | null
+) {
+  // @ts-ignore
+  if (typeof grist === 'undefined' || !grist.docApi) {
+    alert("Not connected to Grist!");
+    return;
+  }
+
+  // Validate projektId - must be selected
+  if (!projektId) {
+    alert("Wybierz projekt przed synchronizacją!");
+    return;
+  }
+
+  // Flatten tree to process linearly
+  const flatNodes = flattenNodes(nodes);
+  const selectedNodes = flatNodes.filter(n => n.selected);
+  
+  console.warn('[GRIST-BOM] Total selected nodes:', selectedNodes.length);
+  selectedNodes.forEach(n => {
+    console.warn('[GRIST-BOM] Node:', n.partNumber, 'action:', n.action, 'status:', n.status);
+  });
+  
+  // 1. Collect parts and existing records
+  const newCadParts = new Set<string>();
+  const updateCadRecords = new Map<number, number>(); // gristId -> projektId
+
+  for (const node of selectedNodes) {
+    if (node.status !== 'Usunięty') {
+      // Tylko dodajemy do newCadParts, jeśli action to 'create'
+      if (node.action === 'create' && !newCadParts.has(node.partNumber)) {
+        newCadParts.add(node.partNumber);
+      }
+      // Aktualizujemy Projekt TYLKO dla istniejących rekordów (action: update, existing, none)
+      // nie tworzymy nowych rekordów dla 'none' - już istnieją
+      if (node.gristId && node.action !== 'create') {
+        updateCadRecords.set(node.gristId, projektId);
+      }
+    }
+  }
+  
+  console.warn('[GRIST-BOM] New CAD parts:', newCadParts.size, 'Update CAD records:', updateCadRecords.size);
+  
+  // 1. Create new BOM_CAD records WITHOUT Projekt field (to avoid Link column issues)
+  if (newCadParts.size > 0) {
+    const cadInserts = Array.from(newCadParts).map(partNumber => {
+      const node = flatNodes.find(n => n.partNumber === partNumber && n.status !== 'Usunięty');
+      return node ? {
+        Part_Number: partNumber,
+        Description: node.description,
+        Material: node.rawData['Material'] || '',
+        REV: node.rawData['REV'] || node.rawData['Revision'] || '',
+        Producent: node.rawData['Producent'] || node.rawData['Manufacturer'] || '',
+      } : null;
+    }).filter(Boolean);
+    
+    if (cadInserts.length > 0) {
+      const cols = Object.keys(cadInserts[0]);
+      const payload: any = {};
+      for (const col of cols) {
+        payload[col] = cadInserts.map(r => r[col]);
+      }
+      const ids = new Array(cadInserts.length).fill(null);
+      console.warn('[GRIST-BOM] BulkAddRecord BOM_CAD payload:', JSON.stringify(payload, null, 2));
+      // @ts-ignore
+      await grist.docApi.applyUserActions([
+        ['BulkAddRecord', 'BOM_CAD', ids, payload]
+      ]);
+      console.warn('[GRIST-BOM] Created', cadInserts.length, 'BOM_CAD records (without Projekt)');
+    }
+  }
+  
+  // Refetch BOM_CAD to get the new IDs and existing records
+  const updatedCadData = await fetchGristData();
+  const updatedCad = updatedCadData.cad;
+  
+  // Update ALL CAD records (both new and existing) with Projekt
+  if (updateCadRecords.size > 0 || newCadParts.size > 0) {
+    // For existing records, we have their IDs in updateCadRecords
+    // For new records, we need to find them by Part_Number and get their IDs from updatedCad
+    const allCadIdsToUpdate: number[] = [];
+    
+    // Add existing record IDs
+    for (const cadId of updateCadRecords.keys()) {
+      allCadIdsToUpdate.push(cadId);
+    }
+    
+    // Add new record IDs (find by Part_Number in updatedCad)
+    for (const partNumber of newCadParts) {
+      const cadRecord = updatedCad.find(c => c.Part_Number === partNumber);
+      if (cadRecord && cadRecord.id && !allCadIdsToUpdate.includes(cadRecord.id)) {
+        allCadIdsToUpdate.push(cadRecord.id);
+      }
+    }
+    
+    if (allCadIdsToUpdate.length > 0) {
+      console.warn('[GRIST-BOM] Updating', allCadIdsToUpdate.length, 'BOM_CAD records with Projekt:', projektId);
+      console.warn('[GRIST-BOM] BulkUpdateRecord BOM_CAD payload:', JSON.stringify({ Projekt: allCadIdsToUpdate.map(() => projektId) }, null, 2));
+      // For Link columns in BulkUpdateRecord, Grist expects an array of values
+      // @ts-ignore
+      await grist.docApi.applyUserActions([
+        ['BulkUpdateRecord', 'BOM_CAD', allCadIdsToUpdate, { 
+          Projekt: allCadIdsToUpdate.map(() => projektId) 
+        }]
+      ]);
+      console.warn('[GRIST-BOM] BOM_CAD records updated with Projekt');
+    }
+  }
+  
+  // Build cadMap for structure mapping
+  const cadMap = new Map<string, number>();
+  for (const cad of updatedCad) {
+    if (cad.Part_Number && cad.Projekt === projektId) {
+      cadMap.set(cad.Part_Number.toString(), cad.id);
+    } else if (cad.Part_Number) {
+      // Fallback if Projekt is empty or doesn't match perfectly
+      cadMap.set(cad.Part_Number.toString(), cad.id);
+    }
+  }
+  
+  // 2. Prepare BOM_struktura actions
+  const structInserts: any[] = [];
+  const structUpdates: any[] = [];
+  
+  for (const node of selectedNodes) {
+    const cadId = cadMap.get(node.partNumber);
+    if (!cadId) continue; // Should not happen if previous step worked
+    
+    let parentId = null;
+    if (node.parentItem) {
+      const parentNode = flatNodes.find(n => n.item === node.parentItem);
+      if (parentNode) {
+        parentId = cadMap.get(parentNode.partNumber) || null;
+      }
+    }
+    
+    if (node.gristStructureId) {
+      // Update
+      structUpdates.push([
+        node.gristStructureId,
+        {
+          QTY: node.qty,
+          Parent: parentId,
+          Status_czesci: node.status,
+          Projekt: projektId
+        }
+      ]);
+    } else if (node.status !== 'Usunięty') {
+      // Create
+      structInserts.push({
+        Part_Number: cadId,
+        Parent: parentId,
+        Item: node.item,
+        QTY: node.qty,
+        Status_czesci: 'Aktywny',
+        Projekt: projektId
+      });
+    }
+  }
+  
+  const actions: any[] = [];
+  if (structInserts.length > 0) {
+    const cols = Object.keys(structInserts[0]);
+    const payload: any = {};
+    for (const col of cols) {
+      payload[col] = structInserts.map(r => r[col]);
+    }
+    const ids = new Array(structInserts.length).fill(null);
+    actions.push(['BulkAddRecord', 'BOM_struktura', ids, payload]);
+  }
+  
+  if (structUpdates.length > 0) {
+    const ids = structUpdates.map(u => u[0]);
+    const columns = Object.keys(structUpdates[0][1]);
+    const updatesByCol: any = {};
+    for (const col of columns) {
+      updatesByCol[col] = structUpdates.map(u => u[1][col]);
+    }
+    actions.push(['BulkUpdateRecord', 'BOM_struktura', ids, updatesByCol]);
+  }
+  
+  if (actions.length > 0) {
+    // @ts-ignore
+    await grist.docApi.applyUserActions(actions);
+  }
+}
+
+export function flattenNodes(nodes: BOMNode[]): BOMNode[] {
+  const flat: BOMNode[] = [];
+  for (const node of nodes) {
+    flat.push(node);
+    if (node.children.length > 0) {
+      flat.push(...flattenNodes(node.children));
+    }
+  }
+  return flat;
+}
