@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import TreeNode from './components/TreeNode.vue';
 import { parseBOMFile, type BOMNode } from './utils/bomParser';
 import { initGristApi, fetchGristData, syncToGrist, fetchProjects, currentProjektId } from './utils/gristApi';
@@ -103,6 +103,18 @@ onMounted(async () => {
       }
     }
   });
+});
+
+// Auto-refresh actions when projektId changes
+watch(projektId, async (newProjektId) => {
+  if (newProjektId && fileData.value.length > 0) {
+    console.warn('[GRIST-BOM] Projekt changed to:', newProjektId, 'Refreshing actions...');
+    try {
+      await refreshActions();
+    } catch (err) {
+      console.error('[GRIST-BOM] Failed to refresh actions on project change:', err);
+    }
+  }
 });
 
 const handleDrop = async (e: DragEvent) => {
@@ -352,10 +364,10 @@ body, html {
 
 .tree-header {
   display: flex;
-  padding: 0.75rem 4px;
+  padding: 6px 4px;
   background-color: rgba(0,0,0,0.2);
   border-bottom: 1px solid rgba(255,255,255,0.1);
-  font-size: 0.75rem;
+  font-size: 11px;
   text-transform: uppercase;
   color: var(--text-muted);
   font-weight: 600;
@@ -365,15 +377,15 @@ body, html {
 .tree-body {
   flex: 1;
   overflow-y: auto;
-  padding: 0.5rem 0;
+  padding: 0.25rem 0;
 }
 
 /* Widths must match TreeNode.vue */
 .col-expand { width: 30px; text-align: center; }
 .col-check { width: 30px; text-align: center; }
-.col-item { width: 80px; }
-.col-part { width: 150px; }
-.col-qty { width: 60px; text-align: center; }
-.col-desc { flex: 1; }
-.col-action { width: 120px; text-align: center; }
+.col-item { width: 80px; text-align: left; }
+.col-part { width: 150px; text-align: left; }
+.col-qty { width: 60px; text-align: left; }
+.col-desc { flex: 1; text-align: left; }
+.col-action { width: 120px; text-align: left; }
 </style>

@@ -79,17 +79,18 @@ const actionClass = computed(() => {
 .node-row {
   display: flex;
   align-items: center;
-  padding: 8px 4px;
+  padding: 6px 4px;
   border-bottom: 1px solid rgba(255,255,255,0.1);
   transition: background-color 0.2s;
+  font-size: 12px;
 }
 .node-row:hover {
   background-color: rgba(255,255,255,0.05);
 }
 .node-children {
-  padding-left: 24px;
+  padding-left: 16px;
   border-left: 1px solid rgba(255,255,255,0.1);
-  margin-left: 12px;
+  margin-left: 0;
 }
 .is-deleted {
   opacity: 0.6;
@@ -97,11 +98,11 @@ const actionClass = computed(() => {
 }
 .col-expand { width: 30px; text-align: center; }
 .col-check { width: 30px; text-align: center; }
-.col-item { width: 80px; font-weight: bold; }
-.col-part { width: 150px; font-family: monospace; }
-.col-qty { width: 60px; text-align: center; }
-.col-desc { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.col-action { width: 120px; text-align: center; }
+.col-item { width: 80px; font-weight: normal; text-align: left; }
+.col-part { width: 150px; font-family: monospace; text-align: left; }
+.col-qty { width: 60px; text-align: left; }
+.col-desc { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.col-action { width: 120px; text-align: left; }
 
 .expand-btn {
   background: none;
@@ -117,9 +118,9 @@ const actionClass = computed(() => {
 }
 
 .badge {
-  padding: 4px 8px;
-  border-radius: 12px;
-  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
 }
