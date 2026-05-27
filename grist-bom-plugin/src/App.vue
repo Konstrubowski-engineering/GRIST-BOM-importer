@@ -4,7 +4,7 @@
       <h1>🔩 BOM Importer</h1>
       <div class="project-info">
         <label class="project-label">Projekt:</label>
-        <select v-model="projektId" class="project-select">
+        <select v-model="projektId" class="project-select" :disabled="isSyncing">
           <option :value="null">— wybierz projekt —</option>
           <option v-for="p in availableProjects" :key="p.id" :value="p.id">
             {{ p.Projekt || p.id }}
@@ -20,7 +20,8 @@
     </header>
 
     <main class="content">
-      <div v-if="!tree.length" class="upload-zone" @dragover.prevent @drop.prevent="handleDrop">
+      <!-- Upload Zone -->
+      <div v-if="!tree.length && !validationErrors.length" class="upload-zone" @dragover.prevent @drop.prevent="handleDrop">
         <input type="file" ref="fileInput" @change="handleFileSelect" accept=".xlsx, .csv" class="hidden-input" />
         <div class="upload-content" @click="fileInput?.click()">
           <div class="icon">📁</div>
@@ -29,13 +30,36 @@
         </div>
       </div>
 
-      <div v-else class="tree-container">
+      <!-- Validation Errors Display -->
+      <div v-if="validationErrors.length > 0" class="validation-errors">
+        <div class="error-header">
+          <span class="error-icon">❌</span>
+          <h3>Błędy walidacji pliku</h3>
+          <button @click="reset" class="btn btn-secondary">Wróć</button>
+        </div>
+        <ul class="error-list">
+          <li v-for="(error, index) in validationErrors" :key="index" class="error-item">
+            {{ error }}
+          </li>
+        </ul>
+        <div v-if="validationWarnings.length > 0" class="warnings-section">
+          <h4>⚠️ Ostrzeżenia:</h4>
+          <ul class="warning-list">
+            <li v-for="(warning, index) in validationWarnings" :key="index" class="warning-item">
+              {{ warning }}
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Tree View -->
+      <div v-else-if="tree.length" class="tree-container">
         <div class="toolbar">
-          <button @click="reset" class="btn btn-secondary">Anuluj</button>
-          <button @click="refreshActions" class="btn btn-secondary" :disabled="!fileData.length">
+          <button @click="reset" class="btn btn-secondary" :disabled="isSyncing">Anuluj</button>
+          <button @click="refreshActions" class="btn btn-secondary" :disabled="!fileData.length || isSyncing">
             Odśwież akcje
           </button>
-          <button @click="performSync" class="btn btn-primary" :disabled="isSyncing">
+          <button @click="showConfirmSync = true" class="btn btn-primary" :disabled="isSyncing || !projektId">
             {{ isSyncing ? 'Synchronizowanie...' : 'Synchronizuj zaznaczone z Grist' }}
           </button>
         </div>
@@ -55,23 +79,140 @@
         </div>
       </div>
     </main>
+
+    <!-- Confirmation Modal -->
+    <div v-if="showConfirmSync" class="modal-overlay" @click.self="showConfirmSync = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Potwierdź synchronizację</h3>
+          <button @click="showConfirmSync = false" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Czy na pewno chcesz zsynchronizować zaznaczone elementy z Grist?</p>
+          <div class="sync-summary">
+            <p><strong>Podsumowanie:</strong></p>
+            <ul>
+              <li>Liczba zaznaczonych elementów: <strong>{{ selectedCount }}</strong></li>
+              <li>Liczba nowych części (do dodania): <strong>{{ createCount }}</strong></li>
+              <li>Liczba aktualizacji: <strong>{{ updateCount }}</strong></li>
+              <li>Liczba usunięć: <strong>{{ deleteCount }}</strong></li>
+            </ul>
+          </div>
+          <div v-if="!projektId" class="error-message">
+            ⚠️ Musisz wybrać projekt przed synchronizacją!
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button @click="showConfirmSync = false" class="btn btn-secondary" :disabled="isSyncing">Anuluj</button>
+          <button @click="confirmSync" class="btn btn-primary" :disabled="isSyncing || !projektId">
+            {{ isSyncing ? 'Synchronizowanie...' : 'Potwierdź' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Modal -->
+    <div v-if="showErrorModal" class="modal-overlay" @click.self="showErrorModal = false">
+      <div class="modal error-modal">
+        <div class="modal-header">
+          <h3>❌ Błąd</h3>
+          <button @click="showErrorModal = false" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>{{ errorMessage }}</p>
+          <div v-if="errorDetails" class="error-details">
+            <h4>Szczegóły:</h4>
+            <pre>{{ errorDetails }}</pre>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button @click="showErrorModal = false" class="btn btn-primary">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div v-if="isLoading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p>Przetwarzanie pliku...</p>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import TreeNode from './components/TreeNode.vue';
-import { parseBOMFile, type BOMNode } from './utils/bomParser';
-import { initGristApi, fetchGristData, syncToGrist, fetchProjects, currentProjektId } from './utils/gristApi';
+import { parseBOMFile, type BOMNode, type ValidationResult } from './utils/bomParser';
+import { 
+  initGristApi, 
+  fetchGristData, 
+  syncToGrist, 
+  fetchProjects, 
+  currentProjektId,
+  GristNetworkError,
+  GristPermissionError,
+  GristTimeoutError
+} from './utils/gristApi';
 import { calculateDiff } from './utils/diffLogic';
 
+// State
 const tree = ref<BOMNode[]>([]);
 const projektId = ref<number | null>(null);
 const autoDetectedProjektId = ref<number | null>(null);
 const availableProjects = ref<any[]>([]);
 const isSyncing = ref(false);
+const isLoading = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 const fileData = ref<BOMNode[]>([]); // Store parsed file data for refresh
+const validationErrors = ref<string[]>([]);
+const validationWarnings = ref<string[]>([]);
+
+// Modal state
+const showConfirmSync = ref(false);
+const showErrorModal = ref(false);
+const errorMessage = ref('');
+const errorDetails = ref('');
+
+// Sync summary computed properties
+const selectedCount = computed(() => {
+  const flatNodes = flattenNodes(tree.value);
+  return flatNodes.filter(n => n.selected).length;
+});
+
+const createCount = computed(() => {
+  const flatNodes = flattenNodes(tree.value);
+  return flatNodes.filter(n => n.selected && n.action === 'create').length;
+});
+
+const updateCount = computed(() => {
+  const flatNodes = flattenNodes(tree.value);
+  return flatNodes.filter(n => n.selected && n.action === 'update').length;
+});
+
+const deleteCount = computed(() => {
+  const flatNodes = flattenNodes(tree.value);
+  return flatNodes.filter(n => n.selected && n.action === 'delete').length;
+});
+
+// Helper function to flatten nodes (moved from gristApi.ts for reuse)
+function flattenNodes(nodes: BOMNode[]): BOMNode[] {
+  const flat: BOMNode[] = [];
+  for (const node of nodes) {
+    flat.push(node);
+    if (node.children.length > 0) {
+      flat.push(...flattenNodes(node.children));
+    }
+  }
+  return flat;
+}
+
+// Show error in modal
+const showError = (message: string, details?: string) => {
+  errorMessage.value = message;
+  errorDetails.value = details || '';
+  showErrorModal.value = true;
+  console.error('[GRIST-BOM] Error:', message, details);
+};
 
 onMounted(async () => {
   console.warn('[GRIST-BOM] App mounted - widget loaded');
@@ -88,21 +229,31 @@ onMounted(async () => {
 
   // Load project list immediately
   console.warn('[GRIST-BOM] Fetching projects...');
-  availableProjects.value = await fetchProjects();
-  console.warn('[GRIST-BOM] Projects fetched:', availableProjects.value.length, 'items');
-  if (availableProjects.value.length > 0) {
-    console.warn('[GRIST-BOM] First 5 projects:', availableProjects.value.slice(0, 5).map(p => ({ id: p.id, Projekt: p.Projekt })));
+  try {
+    availableProjects.value = await fetchProjects();
+    console.warn('[GRIST-BOM] Projects fetched:', availableProjects.value.length, 'items');
+    if (availableProjects.value.length > 0) {
+      console.warn('[GRIST-BOM] First 5 projects:', availableProjects.value.slice(0, 5).map(p => ({ id: p.id, Projekt: p.Projekt })));
+    }
+  } catch (err) {
+    console.error('[GRIST-BOM] Failed to fetch projects:', err);
+    showError('Nie udało się pobrać listy projektów. Upewnij się, że widget ma dostęp do Grist API.');
   }
 
-  await initGristApi(async (_record) => {
-    if (currentProjektId) {
-      console.warn('[GRIST-BOM] Auto-detected projektId:', currentProjektId);
-      autoDetectedProjektId.value = currentProjektId;
-      if (!projektId.value) {
-        projektId.value = currentProjektId;
+  try {
+    await initGristApi(async (_record) => {
+      if (currentProjektId) {
+        console.warn('[GRIST-BOM] Auto-detected projektId:', currentProjektId);
+        autoDetectedProjektId.value = currentProjektId;
+        if (!projektId.value) {
+          projektId.value = currentProjektId;
+        }
       }
-    }
-  });
+    });
+  } catch (err) {
+    console.error('[GRIST-BOM] Failed to initialize Grist API:', err);
+    showError('Nie udało się zainicjować połączenia z Grist API.');
+  }
 });
 
 // Auto-refresh actions when projektId changes
@@ -113,6 +264,7 @@ watch(projektId, async (newProjektId) => {
       await refreshActions();
     } catch (err) {
       console.error('[GRIST-BOM] Failed to refresh actions on project change:', err);
+      showError('Nie udało się odświeżyć akcji po zmianie projektu.', String(err));
     }
   }
 });
@@ -130,23 +282,62 @@ const handleFileSelect = async (e: Event) => {
 };
 
 const processFile = async (file: File) => {
+  // Reset previous state
+  validationErrors.value = [];
+  validationWarnings.value = [];
+  isLoading.value = true;
+  
   try {
-    // 1. Parse Excel
-    const parsedNodes = await parseBOMFile(file);
-    fileData.value = parsedNodes; // Store for refresh
+    console.warn('[GRIST-BOM] Processing file:', file.name, 'Size:', file.size);
+    
+    // 1. Parse Excel with validation
+    const result = await parseBOMFile(file);
+    
+    // Check for validation errors
+    if (!result.validation.isValid) {
+      validationErrors.value = result.validation.errors;
+      validationWarnings.value = result.validation.warnings;
+      tree.value = [];
+      fileData.value = [];
+      isLoading.value = false;
+      return;
+    }
+    
+    // Store warnings if any
+    if (result.validation.warnings.length > 0) {
+      validationWarnings.value = result.validation.warnings;
+      // Show warnings but continue processing
+      console.warn('[GRIST-BOM] Warnings:', result.validation.warnings);
+    }
+    
+    fileData.value = result.nodes; // Store for refresh
     
     // 2. Fetch Grist Data (we don't need to store it, refreshActions will fetch fresh data)
     
     // 3. Diff and create tree
     await refreshActions();
+    
   } catch (err: any) {
-    console.error(err);
-    alert('Wystąpił błąd podczas przetwarzania pliku: ' + (err.message || String(err)));
+    console.error('[GRIST-BOM] Error processing file:', err);
+    validationErrors.value = ['Wystąpił nieoczekiwany błąd podczas przetwarzania pliku.'];
+    if (err.message) {
+      validationErrors.value.push(err.message);
+    }
+    tree.value = [];
+    fileData.value = [];
+  } finally {
+    isLoading.value = false;
   }
 };
 
 const refreshActions = async () => {
   if (!fileData.value?.length) return;
+  
+  if (!projektId.value) {
+    showError('Wybierz projekt przed odświeżeniem akcji.');
+    return;
+  }
+  
   try {
     const gristData = await fetchGristData();
     console.warn('[GRIST-BOM] gristData.cad length:', gristData.cad?.length || 0);
@@ -155,27 +346,80 @@ const refreshActions = async () => {
     console.warn('[GRIST-BOM] Actions refreshed for projektId:', projektId.value, 'Tree nodes:', tree.value.length);
   } catch (err: any) {
     console.error('[GRIST-BOM] Failed to refresh actions:', err);
-    alert('Wystąpił błąd podczas odświeżania akcji');
+    
+    // Handle specific error types
+    if (err instanceof GristPermissionError) {
+      showError('Błąd uprawnień', err.message);
+    } else if (err instanceof GristNetworkError) {
+      showError('Błąd połączenia z Grist', err.message, String(err.originalError));
+    } else if (err instanceof GristTimeoutError) {
+      showError('Czas połączenia wygasł', err.message);
+    } else {
+      showError('Nie udało się odświeżyć akcji. Sprawdź połączenie z Grist.', String(err));
+    }
   }
 };
 
 const reset = () => {
   tree.value = [];
+  fileData.value = [];
+  validationErrors.value = [];
+  validationWarnings.value = [];
 };
 
-const performSync = async () => {
-  if (isSyncing.value) return;
+const confirmSync = async () => {
+  if (!projektId.value) {
+    showError('Musisz wybrać projekt przed synchronizacją.');
+    return;
+  }
+  
+  showConfirmSync.value = false;
   isSyncing.value = true;
+  
   try {
     await syncToGrist(tree.value, projektId.value);
-    alert('Synchronizacja zakończona sukcesem!');
-    reset(); // Optionally close tree after sync
-  } catch (err) {
-    console.error(err);
-    alert('Wystąpił błąd podczas synchronizacji.');
+    showErrorModal.value = false;
+    reset(); // Clear tree after successful sync
+    // Show success message
+    setTimeout(() => {
+      alert('✅ Synchronizacja zakończona sukcesem!');
+    }, 100);
+  } catch (err: any) {
+    console.error('[GRIST-BOM] Sync error:', err);
+    
+    // Handle specific error types
+    if (err instanceof GristPermissionError) {
+      showError('Błąd uprawnień', err.message);
+    } else if (err instanceof GristNetworkError) {
+      showError('Błąd połączenia z Grist', err.message, String(err.originalError));
+    } else if (err instanceof GristTimeoutError) {
+      showError('Czas połączenia wygasł', err.message);
+    } else {
+      showError('Wystąpił błąd podczas synchronizacji z Grist.', String(err));
+    }
   } finally {
     isSyncing.value = false;
   }
+};
+
+// Helper function to get user-friendly error message
+const getErrorMessage = (err: any): { title: string; message: string; details?: string } => {
+  if (err instanceof GristPermissionError) {
+    return { title: 'Błąd uprawnień', message: err.message };
+  } else if (err instanceof GristNetworkError) {
+    return { 
+      title: 'Błąd połączenia', 
+      message: err.message,
+      details: String(err.originalError)
+    };
+  } else if (err instanceof GristTimeoutError) {
+    return { title: 'Czas wygasł', message: err.message };
+  } else if (typeof err === 'string') {
+    return { title: 'Błąd', message: err };
+  } else if (err instanceof Error) {
+    return { title: 'Błąd', message: err.message };
+  }
+  return { title: 'Błąd', message: 'Wystąpił nieoczekiwany błąd.' };
 };
 </script>
 
@@ -388,4 +632,243 @@ body, html {
 .col-qty { width: 60px; text-align: left; }
 .col-desc { flex: 1; text-align: left; }
 .col-action { width: 120px; text-align: left; }
+
+/* Validation Errors */
+.validation-errors {
+  flex: 1;
+  background-color: var(--panel-bg);
+  border-radius: 12px;
+  padding: 1.5rem;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+}
+
+.error-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.error-icon {
+  font-size: 1.5rem;
+  color: #ef4444;
+}
+
+.error-header h3 {
+  margin: 0;
+  color: #fca5a5;
+}
+
+.error-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem 0;
+}
+
+.error-item {
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  background-color: rgba(239, 68, 68, 0.1);
+  border-left: 3px solid #ef4444;
+  border-radius: 0 6px 6px 0;
+  color: #fca5a5;
+}
+
+.warnings-section {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.warnings-section h4 {
+  margin: 0 0 0.75rem 0;
+  color: #fbbf24;
+}
+
+.warning-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.warning-item {
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+  background-color: rgba(251, 191, 36, 0.1);
+  border-left: 3px solid #fbbf24;
+  border-radius: 0 6px 6px 0;
+  color: #fbbf24;
+  font-size: 0.9rem;
+}
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background-color: var(--panel-bg);
+  border-radius: 12px;
+  padding: 1.5rem;
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 1;
+}
+
+.close-btn:hover {
+  color: var(--text-main);
+}
+
+.modal-body {
+  margin-bottom: 1.5rem;
+}
+
+.modal-body p {
+  margin: 0 0 1rem 0;
+  color: var(--text-main);
+}
+
+.sync-summary {
+  background-color: rgba(255, 255, 255, 0.05);
+  padding: 1rem;
+  border-radius: 8px;
+  margin: 1rem 0;
+}
+
+.sync-summary ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sync-summary li {
+  padding: 0.25rem 0;
+  color: var(--text-main);
+}
+
+.sync-summary strong {
+  color: var(--primary);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.error-modal {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.error-modal .modal-header h3 {
+  color: #fca5a5;
+}
+
+.error-message {
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  color: #fca5a5;
+  margin: 1rem 0;
+}
+
+.error-details {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background-color: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+
+.error-details h4 {
+  margin: 0 0 0.5rem 0;
+  color: var(--text-muted);
+}
+
+.error-details pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: var(--text-main);
+}
+
+/* Loading Overlay */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  color: var(--text-main);
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 1s ease-in-out infinite;
+  margin-bottom: 1rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-overlay p {
+  margin: 0;
+  font-size: 1.1rem;
+}
 </style>

@@ -21,7 +21,66 @@ export function calculateDiff(
   projektId: number | null
 ): BOMNode[] {
   
+  // Calculate actions for each node
   // ========================================================================
+  const flatNodes = flattenNodes(nodes);
+  
+  for (const node of flatNodes) {
+    const cadRecord = cadMap.get(node.partNumber);
+    
+    // Determine parent part number for structure lookup
+    const parentNode = node.parentItem ? flatNodes.find(n => n.item === node.parentItem) : null;
+    const parentPartNumber = parentNode ? parentNode.partNumber : 'root';
+    
+    // Check if this node exists in BOM_CAD (global library)
+    const partExistsInCad = cadRecord !== undefined;
+=======
+  // ========================================================================
+  // Calculate actions for each node
+  // ========================================================================
+  const flatNodes = flattenNodes(nodes);
+  
+  for (const node of flatNodes) {
+    // Normalize part number for lookup
+    const normalizedPartNumber = node.partNumber.toString().trim().toUpperCase();
+    const cadRecord = cadMap.get(normalizedPartNumber);
+    
+    // Determine parent part number for structure lookup
+    const parentNode = node.parentItem ? flatNodes.find(n => n.item === node.parentItem) : null;
+    const parentPartNumber = parentNode ? parentNode.partNumber.toString().trim().toUpperCase() : 'root';
+    
+    // Check if this node exists in BOM_CAD (global library)
+    const partExistsInCad = cadRecord !== undefined;BOM_CAD: Global library - use ALL records regardless of project
+  // ========================================================================
+  const cadMap = new Map<string, GristBOMCADRecord>();
+  for (const cad of cadRecords) {
+    if (cad.Part_Number) {
+      cadMap.set(cad.Part_Number.toString(), cad);
+    }
+  }
+  
+  // Map CAD ID to Part_Number for structure lookups
+  const cadIdToPartNumber = new Map<number, string>();
+  for (const cad of cadRecords) {
+    cadIdToPartNumber.set(cad.id, cad.Part_Number);
+  }
+=======
+  // ========================================================================
+  // BOM_CAD: Global library - use ALL records regardless of project
+  // ========================================================================
+  const cadMap = new Map<string, GristBOMCADRecord>();
+  for (const cad of cadRecords) {
+    if (cad.Part_Number) {
+      // Normalize part number for case-insensitive comparison
+      cadMap.set(cad.Part_Number.toString().trim().toUpperCase(), cad);
+    }
+  }
+  
+  // Map CAD ID to Part_Number for structure lookups
+  const cadIdToPartNumber = new Map<number, string>();
+  for (const cad of cadRecords) {
+    cadIdToPartNumber.set(cad.id, cad.Part_Number.toString().trim().toUpperCase());
+  }========================================================================
   // BOM_CAD: Global library - use ALL records regardless of project
   // ========================================================================
   const cadMap = new Map<string, GristBOMCADRecord>();
