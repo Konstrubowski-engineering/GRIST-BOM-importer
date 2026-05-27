@@ -70,165 +70,7 @@ async function withRetry<T>(
       );
     }
 
-    // STEP 3: Create/Update BOM_struktura records
-  // ========================================================================
-  const structInserts: any[] = [];
-  const structUpdates: any[] = [];
-
-  for (const node of selectedNodes) {
-    const cadId = cadMapGlobal.get(node.partNumber);
-    if (!cadId) {
-      console.warn('[GRIST-BOM] WARNING: No CAD ID for:', node.partNumber);
-      continue;
-    }
-
-    // Find parent CAD ID
-    let parentId = null;
-    if (node.parentItem) {
-      const parentNode = flatNodes.find(n => n.item === node.parentItem);
-      if (parentNode) {
-        parentId = cadMapGlobal.get(parentNode.partNumber) || null;
-      }
-    }
-
-    if (node.gristStructureId) {
-      // Update existing structure: only QTY, Parent, Status_czesci
-      structUpdates.push([
-        node.gristStructureId,
-        {
-          QTY: node.qty,
-          Parent: parentId,
-          Status_czesci: node.status
-        }
-      ]);
-    } else if (node.status !== 'Usunięty') {
-      // Create new structure record with Projekt
-      structInserts.push({
-        Part_Number: cadId,
-        Parent: parentId,
-        Item: node.item,
-        QTY: node.qty,
-        Status_czesci: 'Aktywny',
-        Projekt: projektId
-      });
-    }
-  }
-
-  console.warn('[GRIST-BOM] Struct inserts:', structInserts.length, 'Updates:', structUpdates.length);
-
-  const actions: any[] = [];
-
-  if (structInserts.length > 0) {
-    const cols = Object.keys(structInserts[0]);
-    const payload: any = {};
-    for (const col of cols) {
-      payload[col] = structInserts.map(r => r[col]);
-    }
-    actions.push(['BulkAddRecord', 'BOM_struktura', new Array(structInserts.length).fill(null), payload]);
-  }
-
-  if (structUpdates.length > 0) {
-    const ids = structUpdates.map(u => u[0]);
-    const columns = Object.keys(structUpdates[0][1]);
-    const updatesByCol: any = {};
-    for (const col of columns) {
-      updatesByCol[col] = structUpdates.map(u => u[1][col]);
-    }
-    actions.push(['BulkUpdateRecord', 'BOM_struktura', ids, updatesByCol]);
-  }
-
-  if (actions.length > 0) {
-    await grist.docApi.applyUserActions(actions);
-    console.warn('[GRIST-BOM] Executed struct actions');
-  }
-}
-=======
-  // ========================================================================
-  // STEP 3: Create/Update BOM_struktura records
-  // ========================================================================
-  const structInserts: any[] = [];
-  const structUpdates: any[] = [];
-
-  for (const node of selectedNodes) {
-    // Normalize part number for lookup
-    const normalizedPartNumber = node.partNumber.toString().trim().toUpperCase();
-    const cadId = cadMapGlobal.get(normalizedPartNumber);
-    if (!cadId) {
-      console.warn('[GRIST-BOM] WARNING: No CAD ID for:', node.partNumber);
-      continue;
-    }
-
-    // Find parent CAD ID
-    let parentId = null;
-    if (node.parentItem) {
-      const parentNode = flatNodes.find(n => n.item === node.parentItem);
-      if (parentNode) {
-        const normalizedParentPN = parentNode.partNumber.toString().trim().toUpperCase();
-        parentId = cadMapGlobal.get(normalizedParentPN) || null;
-      }
-    }
-
-    if (node.gristStructureId) {
-      // Update existing structure: only QTY, Parent, Status_czesci
-      structUpdates.push([
-        node.gristStructureId,
-        {
-          QTY: node.qty,
-          Parent: parentId,
-          Status_czesci: node.status
-        }
-      ]);
-    } else if (node.status !== 'Usunięty') {
-      // Create new structure record with Projekt
-      structInserts.push({
-        Part_Number: cadId,
-        Parent: parentId,
-        Item: node.item,
-        QTY: node.qty,
-        Status_czesci: 'Aktywny',
-        Projekt: projektId
-      });
-    }
-  }
-
-  console.warn('[GRIST-BOM] Struct inserts:', structInserts.length, 'Updates:', structUpdates.length);
-
-  const actions: any[] = [];
-
-  if (structInserts.length > 0) {
-    const cols = Object.keys(structInserts[0]);
-    const payload: any = {};
-    for (const col of cols) {
-      payload[col] = structInserts.map(r => r[col]);
-    }
-    actions.push(['BulkAddRecord', 'BOM_struktura', new Array(structInserts.length).fill(null), payload]);
-  }
-
-  if (structUpdates.length > 0) {
-    const ids = structUpdates.map(u => u[0]);
-    const columns = Object.keys(structUpdates[0][1]);
-    const updatesByCol: any = {};
-    for (const col of columns) {
-      updatesByCol[col] = structUpdates.map(u => u[1][col]);
-    }
-    actions.push(['BulkUpdateRecord', 'BOM_struktura', ids, updatesByCol]);
-  }
-
-  if (actions.length > 0) {
-    try {
-      await withRetry(
-        () => grist.docApi.applyUserActions(actions),
-        'applyUserActions(BOM_struktura)'
-      );
-      console.warn('[GRIST-BOM] Executed struct actions');
-    } catch (e: any) {
-      if (isPermissionError(e)) {
-        throw new GristPermissionError('Brak uprawnień do modyfikacji tabeli BOM_struktura.');
-      }
-      throw new GristNetworkError('Nie udało się zaktualizować struktury BOM.', e);
-    }
-  }
-}Check for specific error types
+    // Check for specific error types
     if (error.name === 'GristPermissionError') {
       throw error; // Don't retry permission errors
     }
@@ -557,83 +399,6 @@ export async function fetchProjects() {
   }
 }
 
-  // STEP 1: Fetch current BOM_CAD data (global library)
-  // ========================================================================
-  const cadData = await fetchGristData();
-  const allCadRecords = cadData.cad;
-
-  const cadMapGlobal = new Map<string, number>();
-  for (const cad of allCadRecords) {
-    if (cad.Part_Number) {
-      cadMapGlobal.set(cad.Part_Number.toString(), cad.id);
-    }
-  }
-
-  // ========================================================================
-  // STEP 2: Create missing parts in BOM_CAD (global library)
-  // ========================================================================
-  // Nodes without gristId don't exist in BOM_CAD
-  const partsToCreateInCad = selectedNodes.filter(
-    n => n.status !== 'Usunięty' && n.action === 'create' && n.gristId === undefined
-  );
-
-  console.warn('[GRIST-BOM] Parts to create in BOM_CAD:', partsToCreateInCad.length);
-
-  if (partsToCreateInCad.length > 0) {
-    interface CadInsert {
-      Part_Number: string;
-      Description: string;
-      Material: string;
-      REV: string;
-      Producent: string;
-    }
-
-    const cadInserts: CadInsert[] = partsToCreateInCad.map(node => ({
-      Part_Number: node.partNumber,
-      Description: node.description,
-      Material: node.rawData['Material'] || '',
-      REV: node.rawData['REV'] || node.rawData['Revision'] || '',
-      Producent: node.rawData['Producent'] || node.rawData['Manufacturer'] || '',
-    }));
-
-    const cols = Object.keys(cadInserts[0]) as (keyof CadInsert)[];
-    const payload: Record<string, any[]> = {};
-    for (const col of cols) {
-      payload[col] = cadInserts.map(r => r[col]);
-    }
-    const ids = new Array(cadInserts.length).fill(null);
-
-    await grist.docApi.applyUserActions([
-      ['BulkAddRecord', 'BOM_CAD', ids, payload]
-    ]);
-    console.warn('[GRIST-BOM] Created', cadInserts.length, 'BOM_CAD records');
-
-    // Refetch to get IDs of newly created records
-    const updatedCadData = await fetchGristData();
-
-    // Update Projekt for newly created CAD records
-    const newCadIds: number[] = partsToCreateInCad.map(node => {
-      const cadRecord = updatedCadData.cad.find((c: any) => c.Part_Number === node.partNumber);
-      return cadRecord?.id;
-    }).filter((id): id is number => id !== undefined);
-
-    if (newCadIds.length > 0) {
-      console.warn('[GRIST-BOM] Setting Projekt=', projektId, 'for new CAD records:', newCadIds);
-      await grist.docApi.applyUserActions([
-        ['BulkUpdateRecord', 'BOM_CAD', newCadIds, {
-          Projekt: newCadIds.map(() => projektId)
-        }]
-      ]);
-    }
-
-    // Update cadMapGlobal with new records
-    for (const cad of updatedCadData.cad) {
-      if (cad.Part_Number && !cadMapGlobal.has(cad.Part_Number)) {
-        cadMapGlobal.set(cad.Part_Number, cad.id);
-      }
-    }
-  }
-=======
 export async function syncToGrist(
   nodes: BOMNode[],
   projektId: number | null
@@ -776,82 +541,6 @@ export async function syncToGrist(
         cadMapGlobal.set(cad.Part_Number.toString().trim().toUpperCase(), cad.id);
       }
     }
-  }========================================================================
-  // STEP 1: Fetch current BOM_CAD data (global library)
-  // ========================================================================
-  const cadData = await fetchGristData();
-  const allCadRecords = cadData.cad;
-
-  const cadMapGlobal = new Map<string, number>();
-  for (const cad of allCadRecords) {
-    if (cad.Part_Number) {
-      cadMapGlobal.set(cad.Part_Number.toString(), cad.id);
-    }
-  }
-
-  // ========================================================================
-  // STEP 2: Create missing parts in BOM_CAD (global library)
-  // ========================================================================
-  // Nodes without gristId don't exist in BOM_CAD
-  const partsToCreateInCad = selectedNodes.filter(
-    n => n.status !== 'Usunięty' && n.action === 'create' && n.gristId === undefined
-  );
-
-  console.warn('[GRIST-BOM] Parts to create in BOM_CAD:', partsToCreateInCad.length);
-
-  if (partsToCreateInCad.length > 0) {
-    interface CadInsert {
-      Part_Number: string;
-      Description: string;
-      Material: string;
-      REV: string;
-      Producent: string;
-    }
-
-    const cadInserts: CadInsert[] = partsToCreateInCad.map(node => ({
-      Part_Number: node.partNumber,
-      Description: node.description,
-      Material: node.rawData['Material'] || '',
-      REV: node.rawData['REV'] || node.rawData['Revision'] || '',
-      Producent: node.rawData['Producent'] || node.rawData['Manufacturer'] || '',
-    }));
-
-    const cols = Object.keys(cadInserts[0]) as (keyof CadInsert)[];
-    const payload: Record<string, any[]> = {};
-    for (const col of cols) {
-      payload[col] = cadInserts.map(r => r[col]);
-    }
-    const ids = new Array(cadInserts.length).fill(null);
-
-    await grist.docApi.applyUserActions([
-      ['BulkAddRecord', 'BOM_CAD', ids, payload]
-    ]);
-    console.warn('[GRIST-BOM] Created', cadInserts.length, 'BOM_CAD records');
-
-    // Refetch to get IDs of newly created records
-    const updatedCadData = await fetchGristData();
-
-    // Update Projekt for newly created CAD records
-    const newCadIds: number[] = partsToCreateInCad.map(node => {
-      const cadRecord = updatedCadData.cad.find((c: any) => c.Part_Number === node.partNumber);
-      return cadRecord?.id;
-    }).filter((id): id is number => id !== undefined);
-
-    if (newCadIds.length > 0) {
-      console.warn('[GRIST-BOM] Setting Projekt=', projektId, 'for new CAD records:', newCadIds);
-      await grist.docApi.applyUserActions([
-        ['BulkUpdateRecord', 'BOM_CAD', newCadIds, {
-          Projekt: newCadIds.map(() => projektId)
-        }]
-      ]);
-    }
-
-    // Update cadMapGlobal with new records
-    for (const cad of updatedCadData.cad) {
-      if (cad.Part_Number && !cadMapGlobal.has(cad.Part_Number)) {
-        cadMapGlobal.set(cad.Part_Number, cad.id);
-      }
-    }
   }
 
   // ========================================================================
@@ -861,7 +550,9 @@ export async function syncToGrist(
   const structUpdates: any[] = [];
 
   for (const node of selectedNodes) {
-    const cadId = cadMapGlobal.get(node.partNumber);
+    // Normalize part number for lookup
+    const normalizedPartNumber = node.partNumber.toString().trim().toUpperCase();
+    const cadId = cadMapGlobal.get(normalizedPartNumber);
     if (!cadId) {
       console.warn('[GRIST-BOM] WARNING: No CAD ID for:', node.partNumber);
       continue;
@@ -872,7 +563,8 @@ export async function syncToGrist(
     if (node.parentItem) {
       const parentNode = flatNodes.find(n => n.item === node.parentItem);
       if (parentNode) {
-        parentId = cadMapGlobal.get(parentNode.partNumber) || null;
+        const normalizedParentPN = parentNode.partNumber.toString().trim().toUpperCase();
+        parentId = cadMapGlobal.get(normalizedParentPN) || null;
       }
     }
 
@@ -923,8 +615,18 @@ export async function syncToGrist(
   }
 
   if (actions.length > 0) {
-    await grist.docApi.applyUserActions(actions);
-    console.warn('[GRIST-BOM] Executed struct actions');
+    try {
+      await withRetry(
+        () => grist.docApi.applyUserActions(actions),
+        'applyUserActions(BOM_struktura)'
+      );
+      console.warn('[GRIST-BOM] Executed struct actions');
+    } catch (e: any) {
+      if (isPermissionError(e)) {
+        throw new GristPermissionError('Brak uprawnień do modyfikacji tabeli BOM_struktura.');
+      }
+      throw new GristNetworkError('Nie udało się zaktualizować struktury BOM.', e);
+    }
   }
 }
 
