@@ -420,21 +420,6 @@ export async function syncToGrist(
   });
 
   // ========================================================================
-  // STEP 0: Check for duplicates in the input data
-  // ========================================================================
-  const partNumbersInInput = selectedNodes
-    .filter(n => n.status !== 'Usunięty' && n.action === 'create')
-    .map(n => n.partNumber.toString().trim().toUpperCase());
-  
-  const duplicatePartNumbers = partNumbersInInput.filter((pn, index) => 
-    partNumbersInInput.indexOf(pn) !== index
-  );
-  
-  if (duplicatePartNumbers.length > 0) {
-    throw new Error(`Znaleziono zduplikowane numery części w pliku wejściowym: ${[...new Set(duplicatePartNumbers)].join(', ')}. Popraw plik przed synchronizacją.`);
-  }
-
-  // ========================================================================
   // STEP 1: Fetch current BOM_CAD data (global library)
   // ========================================================================
   const cadData = await fetchGristData();
@@ -445,15 +430,6 @@ export async function syncToGrist(
     if (cad.Part_Number) {
       cadMapGlobal.set(cad.Part_Number.toString().trim().toUpperCase(), cad.id);
     }
-  }
-
-  // Check for duplicates between input and existing CAD records
-  const existingPartNumbers = new Set(cadMapGlobal.keys());
-  const duplicatesWithExisting = partNumbersInInput.filter(pn => existingPartNumbers.has(pn));
-  
-  if (duplicatesWithExisting.length > 0) {
-    console.warn('[GRIST-BOM] Warning: Some part numbers already exist in BOM_CAD:', duplicatesWithExisting);
-    // This is OK - we'll just link to existing records
   }
 
   // ========================================================================
