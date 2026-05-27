@@ -484,33 +484,6 @@ export async function syncToGrist(
     // Refetch to get IDs of newly created records
     const updatedCadData = await fetchGristData();
 
-    // Update Projekt for newly created CAD records
-    const newCadIds: number[] = partsToCreateInCad.map(node => {
-      const cadRecord = updatedCadData.cad.find((c: any) => 
-        c.Part_Number.toString().trim().toUpperCase() === node.partNumber.toString().trim().toUpperCase()
-      );
-      return cadRecord?.id;
-    }).filter((id): id is number => id !== undefined);
-
-    if (newCadIds.length > 0) {
-      console.warn('[GRIST-BOM] Setting Projekt=', projektId, 'for new CAD records:', newCadIds);
-      try {
-        await withRetry(
-          () => grist.docApi.applyUserActions([
-            ['BulkUpdateRecord', 'BOM_CAD', newCadIds, {
-              Projekt: newCadIds.map(() => projektId)
-            }]
-          ]),
-          'BulkUpdateRecord(BOM_CAD)'
-        );
-      } catch (e: any) {
-        if (isPermissionError(e)) {
-          throw new GristPermissionError('Brak uprawnień do aktualizacji rekordów w tabeli BOM_CAD.');
-        }
-        throw new GristNetworkError('Nie udało się zaktualizować projektu dla nowych części.', e);
-      }
-    }
-
     // Update cadMapGlobal with new records
     for (const cad of updatedCadData.cad) {
       if (cad.Part_Number && !cadMapGlobal.has(cad.Part_Number.toString().trim().toUpperCase())) {
