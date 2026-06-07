@@ -5,6 +5,13 @@ export interface BOMRow {
   PartNumber: string;
   QTY: number | string;
   Description: string;
+  Stock_Number: string;
+  REV: string;
+  Material: string;
+  Appearance: string;
+  Mass: string;
+  Vendor: string;
+  Producent: string;
   [key: string]: any;
 }
 
@@ -196,6 +203,13 @@ export async function parseBOMFile(file: File): Promise<{ nodes: BOMNode[]; vali
       PartNumber: getField('Part Number'),
       QTY: qty,
       Description: getField('Description'),
+      Stock_Number: getField('Stock Number'),
+      REV: getField('REV'),
+      Material: getField('Material'),
+      Appearance: getField('Appearance'),
+      Mass: getField('Mass'),
+      Vendor: getField('Vendor'),
+      Producent: getField('Producent') || getField('Manufacturer'),
       ...standardizedRow
     };
   }).filter(r => r.Item && r.PartNumber); // Skip empty rows

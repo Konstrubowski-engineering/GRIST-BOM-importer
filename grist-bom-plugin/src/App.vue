@@ -64,18 +64,26 @@
           </button>
         </div>
         
-        <div class="tree-header">
-          <div class="col-expand"></div>
-          <div class="col-check">✔</div>
-          <div class="col-item">Item</div>
-          <div class="col-part">Part Number</div>
-          <div class="col-qty">QTY</div>
-          <div class="col-desc">Description</div>
-          <div class="col-action">Akcja</div>
-        </div>
+        <div class="tree-table-wrapper">
+          <div class="tree-header">
+            <div class="col-expand"></div>
+            <div class="col-check">✔</div>
+            <div class="col-item">Item</div>
+            <div class="col-part">Part Number</div>
+            <div class="col-qty">QTY</div>
+            <div class="col-desc">Description</div>
+            <div class="col-stock">Stock Number</div>
+            <div class="col-rev">REV</div>
+            <div class="col-material">Material</div>
+            <div class="col-appearance">Appearance</div>
+            <div class="col-mass">Mass</div>
+            <div class="col-vendor">Vendor</div>
+            <div class="col-action">Akcja</div>
+          </div>
 
-        <div class="tree-body">
-          <TreeNode v-for="node in tree" :key="node.item + node.partNumber" :node="node" />
+          <div class="tree-body">
+            <TreeNode v-for="node in tree" :key="node.item + node.partNumber" :node="node" />
+          </div>
         </div>
       </div>
     </main>
@@ -562,15 +570,16 @@ body, html {
   background: var(--panel-bg);
   border-radius: 12px;
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .toolbar {
-  padding: 1rem;
+  padding: 1rem 1.5rem;
   display: flex;
   justify-content: flex-end;
   gap: 1rem;
   border-bottom: 1px solid rgba(255,255,255,0.1);
+  background: linear-gradient(180deg, var(--panel-bg) 0%, rgba(30, 41, 59, 0.8) 100%);
 }
 
 .btn {
@@ -608,30 +617,59 @@ body, html {
 
 .tree-header {
   display: flex;
-  padding: 6px 4px;
-  background-color: rgba(0,0,0,0.2);
-  border-bottom: 1px solid rgba(255,255,255,0.1);
-  font-size: 11px;
+  background-color: var(--panel-bg);
+  border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+  font-size: 12px;
   text-transform: uppercase;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.05em;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  min-width: 1620px;
+  width: 100%;
+}
+
+.tree-header > div {
+  padding: 8px 12px;
+  border-right: 1px solid rgba(255,255,255,0.1);
+  background-color: var(--panel-bg);
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+.tree-header > div:last-child {
+  border-right: none;
 }
 
 .tree-body {
+  min-width: 1620px;
+  width: 100%;
+}
+
+.tree-table-wrapper {
   flex: 1;
-  overflow-y: auto;
-  padding: 0.25rem 0;
+  display: block;
+  overflow: auto;
+  border-radius: 0 0 12px 12px;
 }
 
 /* Widths must match TreeNode.vue */
-.col-expand { width: 30px; text-align: center; }
-.col-check { width: 30px; text-align: center; }
-.col-item { width: 80px; text-align: left; }
-.col-part { width: 150px; text-align: left; }
-.col-qty { width: 60px; text-align: left; }
-.col-desc { flex: 1; text-align: left; }
-.col-action { width: 120px; text-align: left; }
+.col-expand { width: 40px; text-align: center; min-width: 40px; }
+.col-check { width: 40px; text-align: center; min-width: 40px; }
+.col-item { width: 120px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 120px; }
+.col-part { width: 180px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 180px; }
+.col-qty { width: 80px; text-align: right; white-space: nowrap; min-width: 80px; }
+.col-desc { flex: 1; text-align: left; min-width: 250px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.col-stock { width: 150px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 150px; }
+.col-rev { width: 80px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 80px; }
+.col-material { width: 150px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 150px; }
+.col-appearance { width: 150px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 150px; }
+.col-mass { width: 100px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 100px; }
+.col-vendor { width: 150px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 150px; }
+.col-action { width: 130px; text-align: left; white-space: nowrap; min-width: 130px; }
 
 /* Validation Errors */
 .validation-errors {

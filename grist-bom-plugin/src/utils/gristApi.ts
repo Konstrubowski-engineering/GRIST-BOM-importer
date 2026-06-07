@@ -9,6 +9,13 @@ export interface GristBOMCADRecord {
   id: number;
   Part_Number: string;
   Description: string;
+  Stock_Number: string;
+  REV: string;
+  Material: string;
+  Appearance: string;
+  Mass: string;
+  Vendor: string;
+  Producent: string;
   Projekt: number;
   [key: string]: any;
 }
@@ -20,6 +27,13 @@ export interface GristBOMStrukturaRecord {
   Item: string;
   QTY: number | string;
   Status_czesci: string;
+  Stock_Number: string;
+  REV: string;
+  Material: string;
+  Appearance: string;
+  Mass: string;
+  Vendor: string;
+  Description: string;
   [key: string]: any;
 }
 
@@ -446,16 +460,24 @@ export async function syncToGrist(
     interface CadInsert {
       Part_Number: string;
       Description: string;
+      Stock_Number: string;
       Material: string;
       REV: string;
+      Appearance: string;
+      Mass: string;
+      Vendor: string;
       Producent: string;
     }
 
     const cadInserts: CadInsert[] = partsToCreateInCad.map(node => ({
       Part_Number: node.partNumber,
       Description: node.description,
+      Stock_Number: node.rawData['Stock_Number'] || node.rawData['Stock Number'] || '',
       Material: node.rawData['Material'] || '',
       REV: node.rawData['REV'] || node.rawData['Revision'] || '',
+      Appearance: node.rawData['Appearance'] || '',
+      Mass: node.rawData['Mass'] || '',
+      Vendor: node.rawData['Vendor'] || '',
       Producent: node.rawData['Producent'] || node.rawData['Manufacturer'] || '',
     }));
 
@@ -518,24 +540,38 @@ export async function syncToGrist(
     }
 
     if (node.gristStructureId) {
-      // Update existing structure: only QTY, Parent, Status_czesci
+      // Update existing structure: QTY, Parent, Status_czesci + new columns
       structUpdates.push([
         node.gristStructureId,
         {
           QTY: node.qty,
           Parent: parentId,
-          Status_czesci: node.status
+          Status_czesci: node.status,
+          Stock_Number: node.rawData['Stock_Number'] || node.rawData['Stock Number'] || '',
+          REV: node.rawData['REV'] || node.rawData['Revision'] || '',
+          Material: node.rawData['Material'] || '',
+          Appearance: node.rawData['Appearance'] || '',
+          Mass: node.rawData['Mass'] || '',
+          Vendor: node.rawData['Vendor'] || '',
+          Description: node.description
         }
       ]);
     } else if (node.status !== 'Usunięty') {
-      // Create new structure record with Projekt
+      // Create new structure record with Projekt + new columns
       structInserts.push({
         Part_Number: cadId,
         Parent: parentId,
         Item: node.item,
         QTY: node.qty,
         Status_czesci: 'Aktywny',
-        Projekt: projektId
+        Projekt: projektId,
+        Stock_Number: node.rawData['Stock_Number'] || node.rawData['Stock Number'] || '',
+        REV: node.rawData['REV'] || node.rawData['Revision'] || '',
+        Material: node.rawData['Material'] || '',
+        Appearance: node.rawData['Appearance'] || '',
+        Mass: node.rawData['Mass'] || '',
+        Vendor: node.rawData['Vendor'] || '',
+        Description: node.description
       });
     }
   }
